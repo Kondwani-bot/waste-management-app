@@ -1,0 +1,11 @@
+{
+  "name": "Waste Management",
+  "description": "Simple 3-step waste reporting tool to snap, locate, and send reports anonymously.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
