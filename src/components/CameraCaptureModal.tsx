@@ -1,29 +1,56 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Camera, X, RefreshCw, Check, AlertCircle, Sparkles } from 'lucide-react';
+import {
+  Camera,
+  Video,
+  X,
+  RefreshCw,
+  Check,
+  AlertCircle,
+  Square,
+  Play,
+  Pause,
+  RotateCcw,
+} from 'lucide-react';
 
 interface CameraCaptureModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onPhotoCaptured: (dataUrl: string) => void;
+  onMediaCaptured: (mediaUrl: string, mediaType: 'photo' | 'video') => void;
   onFallbackToFilePicker: () => void;
 }
 
 export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
   isOpen,
   onClose,
-  onPhotoCaptured,
+  onMediaCaptured,
   onFallbackToFilePicker,
 }) => {
+  const [captureMode, setCaptureMode] = useState<'photo' | 'video'>('photo');
   const videoRef = useRef<HTMLVideoElement>(null);
+  const previewVideoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const [capturedImage, setCapturedImage] = useState<string | null>(null);
+
+  // Photo capture state
+  const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
+  const [isShutterFlashing, setIsShutterFlashing] = useState(false);
+
+  // Video recording state
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordedVideoUrl, setRecordedVideoUrl] = useState<string | null>(null);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const timerIntervalRef = useRef<number | null>(null);
+
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
-  const [isShutterFlashing, setIsShutterFlashing] = useState(false);
   const [isStartingCamera, setIsStartingCamera] = useState(true);
 
-  // Stop current active stream
+  const MAX_RECORDING_SECONDS = 30;
+
+  // Stop active camera and microphone tracks
   const stopStream = () => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
@@ -31,36 +58,52 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
     }
   };
 
-  // Start webcam
-  const startCamera = async (mode: 'user' | 'environment') => {
+  const clearTimer = () => {
+    if (timerIntervalRef.current) {
+      window.clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
+  };
+
+  // Start webcam (and audio if in video mode)
+  const startCamera = async (mode: 'user' | 'environment', includeAudio: boolean) => {
     stopStream();
     setIsStartingCamera(true);
     setCameraError(null);
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setCameraError('Camera access is not supported by this browser.');
+      setCameraError('Camera access is not supported in this browser.');
       setIsStartingCamera(false);
       return;
     }
 
     try {
-      // First try with requested facingMode, fallback to generic video if facingMode constraint fails on laptop webcams
       let stream: MediaStream;
+      const videoConstraints: MediaTrackConstraints = {
+        facingMode: { ideal: mode },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      };
+
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: mode },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
-          audio: false,
+          video: videoConstraints,
+          audio: includeAudio,
         });
-      } catch {
-        // Fallback for laptops that don't support facingMode constraint
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: false,
-        });
+      } catch (firstErr) {
+        // If audio request failed or facingMode is not supported on laptop webcam
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: includeAudio,
+          });
+        } catch {
+          // Fallback to video only without microphone
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false,
+          });
+        }
       }
 
       streamRef.current = stream;
@@ -70,37 +113,44 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
       }
       setIsStartingCamera(false);
     } catch (err: any) {
-      console.warn('Camera access denied or error:', err);
+      console.warn('Camera stream error:', err);
       setIsStartingCamera(false);
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        setCameraError('Camera permission was blocked. Please allow camera in your browser settings.');
+        setCameraError('Camera or microphone permission was blocked. Please allow permissions in your browser.');
       } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-        setCameraError('No camera hardware found on this computer.');
+        setCameraError('No camera hardware found on this device.');
       } else {
-        setCameraError('Could not start camera feed.');
+        setCameraError('Unable to access the camera.');
       }
     }
   };
 
   useEffect(() => {
     if (isOpen) {
-      setCapturedImage(null);
-      startCamera(facingMode);
+      setCapturedPhoto(null);
+      setRecordedVideoUrl(null);
+      setIsRecording(false);
+      setRecordingSeconds(0);
+      clearTimer();
+      startCamera(facingMode, captureMode === 'video');
     } else {
+      stopRecordingImmediate();
       stopStream();
+      clearTimer();
     }
     return () => {
+      stopRecordingImmediate();
       stopStream();
+      clearTimer();
     };
-  }, [isOpen, facingMode]);
+  }, [isOpen, facingMode, captureMode]);
 
-  // Capture current frame from video into canvas
-  const handleSnap = () => {
+  // Capture Photo
+  const handleSnapPhoto = () => {
     if (!videoRef.current) return;
     const video = videoRef.current;
     if (video.videoWidth === 0 || video.videoHeight === 0) return;
 
-    // Trigger visual shutter flash
     setIsShutterFlashing(true);
     setTimeout(() => setIsShutterFlashing(false), 200);
 
@@ -109,35 +159,144 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext('2d');
     if (ctx) {
-      // If user camera, mirror for natural selfie preview
       if (facingMode === 'user') {
         ctx.translate(canvas.width, 0);
         ctx.scale(-1, 1);
       }
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-      setCapturedImage(dataUrl);
+      setCapturedPhoto(dataUrl);
       stopStream();
     }
   };
 
-  const handleRetake = () => {
-    setCapturedImage(null);
-    startCamera(facingMode);
+  // Start Video Recording
+  const startRecording = () => {
+    if (!streamRef.current) return;
+    recordedChunksRef.current = [];
+    setRecordingSeconds(0);
+
+    let mimeType = 'video/webm';
+    if (typeof MediaRecorder !== 'undefined') {
+      if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')) {
+        mimeType = 'video/webm;codecs=vp9,opus';
+      } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')) {
+        mimeType = 'video/webm;codecs=vp8,opus';
+      } else if (MediaRecorder.isTypeSupported('video/webm')) {
+        mimeType = 'video/webm';
+      } else if (MediaRecorder.isTypeSupported('video/mp4')) {
+        mimeType = 'video/mp4';
+      }
+    }
+
+    try {
+      const recorder = new MediaRecorder(streamRef.current, { mimeType });
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          recordedChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(recordedChunksRef.current, { type: mimeType });
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          if (typeof reader.result === 'string') {
+            setRecordedVideoUrl(reader.result);
+          } else {
+            // Fallback to object URL
+            const objUrl = URL.createObjectURL(blob);
+            setRecordedVideoUrl(objUrl);
+          }
+        };
+        reader.readAsDataURL(blob);
+        stopStream();
+      };
+
+      recorder.start(250); // Slice data every 250ms
+      mediaRecorderRef.current = recorder;
+      setIsRecording(true);
+
+      // Start elapsed timer
+      timerIntervalRef.current = window.setInterval(() => {
+        setRecordingSeconds((prev) => {
+          if (prev + 1 >= MAX_RECORDING_SECONDS) {
+            stopRecording();
+            return MAX_RECORDING_SECONDS;
+          }
+          return prev + 1;
+        });
+      }, 1000);
+    } catch (err) {
+      console.error('Error starting MediaRecorder', err);
+      setCameraError('Unable to record video in this browser.');
+    }
   };
 
-  const handleConfirm = () => {
-    if (capturedImage) {
-      onPhotoCaptured(capturedImage);
+  // Stop recording normally
+  const stopRecording = () => {
+    clearTimer();
+    setIsRecording(false);
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+  };
+
+  // Immediate abort cleanup
+  const stopRecordingImmediate = () => {
+    clearTimer();
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch {}
+    }
+    setIsRecording(false);
+  };
+
+  const handleRetake = () => {
+    setCapturedPhoto(null);
+    setRecordedVideoUrl(null);
+    setIsRecording(false);
+    setRecordingSeconds(0);
+    clearTimer();
+    startCamera(facingMode, captureMode === 'video');
+  };
+
+  const handleConfirmMedia = () => {
+    if (captureMode === 'photo' && capturedPhoto) {
+      onMediaCaptured(capturedPhoto, 'photo');
+      onClose();
+    } else if (captureMode === 'video' && recordedVideoUrl) {
+      onMediaCaptured(recordedVideoUrl, 'video');
       onClose();
     }
   };
 
   const toggleFacingMode = () => {
+    if (isRecording) return;
     setFacingMode((prev) => (prev === 'environment' ? 'user' : 'environment'));
   };
 
+  const toggleVideoPlayback = () => {
+    if (!previewVideoRef.current) return;
+    if (isVideoPlaying) {
+      previewVideoRef.current.pause();
+      setIsVideoPlaying(false);
+    } else {
+      previewVideoRef.current.play();
+      setIsVideoPlaying(true);
+    }
+  };
+
+  const formatSeconds = (sec: number) => {
+    const mins = Math.floor(sec / 60);
+    const remainder = sec % 60;
+    return `${mins.toString().padStart(2, '0')}:${remainder.toString().padStart(2, '0')}`;
+  };
+
   if (!isOpen) return null;
+
+  const isReviewing = Boolean(capturedPhoto || recordedVideoUrl);
 
   return (
     <div
@@ -152,10 +311,58 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
       >
         {/* Top Header */}
         <div className="px-4 py-3 flex items-center justify-between border-b border-neutral-800 bg-neutral-950/80">
-          <div className="flex items-center gap-2 text-white">
-            <Camera className="w-4 h-4 text-emerald-400" />
-            <span className="text-xs font-bold uppercase tracking-wider">Live Camera</span>
-          </div>
+          {/* Mode Switch Pills */}
+          {!isReviewing ? (
+            <div className="flex items-center gap-1 bg-neutral-800/80 p-1 rounded-full border border-neutral-700/60">
+              <button
+                id="camera-mode-photo-btn"
+                onClick={() => {
+                  if (isRecording) return;
+                  setCaptureMode('photo');
+                }}
+                disabled={isRecording}
+                className={`flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold transition-all ${
+                  captureMode === 'photo'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'text-neutral-400 hover:text-white'
+                }`}
+              >
+                <Camera className="w-3.5 h-3.5" />
+                <span>Photo</span>
+              </button>
+              <button
+                id="camera-mode-video-btn"
+                onClick={() => {
+                  if (isRecording) return;
+                  setCaptureMode('video');
+                }}
+                disabled={isRecording}
+                className={`flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold transition-all ${
+                  captureMode === 'video'
+                    ? 'bg-rose-600 text-white shadow-xs'
+                    : 'text-neutral-400 hover:text-white'
+                }`}
+              >
+                <Video className="w-3.5 h-3.5" />
+                <span>Video</span>
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 text-white text-xs font-bold">
+              {captureMode === 'photo' ? (
+                <>
+                  <Camera className="w-4 h-4 text-emerald-400" />
+                  <span>Review Photo</span>
+                </>
+              ) : (
+                <>
+                  <Video className="w-4 h-4 text-rose-400" />
+                  <span>Review Video</span>
+                </>
+              )}
+            </div>
+          )}
+
           <button
             id="camera-close-btn"
             onClick={onClose}
@@ -198,16 +405,44 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
                 Upload from Files Instead
               </button>
             </div>
-          ) : capturedImage ? (
+          ) : capturedPhoto ? (
             /* Review captured photo */
             <div className="relative w-full h-full">
               <img
-                src={capturedImage}
+                src={capturedPhoto}
                 alt="Captured snapshot"
                 className="w-full h-full object-cover"
               />
-              <div className="absolute top-3 left-3 bg-emerald-600/90 text-white text-[11px] font-bold px-2.5 py-1 rounded-full backdrop-blur-xs flex items-center gap-1">
-                <Check className="w-3.5 h-3.5 stroke-[3]" /> Photo Captured
+              <div className="absolute top-3 left-3 bg-emerald-600/90 text-white text-[11px] font-bold px-2.5 py-1 rounded-full backdrop-blur-xs flex items-center gap-1 shadow-md">
+                <Check className="w-3.5 h-3.5 stroke-[3]" /> Photo Ready
+              </div>
+            </div>
+          ) : recordedVideoUrl ? (
+            /* Review recorded video */
+            <div className="relative w-full h-full flex items-center justify-center bg-black group">
+              <video
+                ref={previewVideoRef}
+                src={recordedVideoUrl}
+                playsInline
+                loop
+                onPlay={() => setIsVideoPlaying(true)}
+                onPause={() => setIsVideoPlaying(false)}
+                className="w-full h-full object-contain cursor-pointer"
+                onClick={toggleVideoPlayback}
+              />
+              <button
+                onClick={toggleVideoPlayback}
+                className="absolute inset-0 m-auto w-14 h-14 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center transition-all backdrop-blur-xs pointer-events-auto"
+                title={isVideoPlaying ? 'Pause' : 'Play'}
+              >
+                {isVideoPlaying ? (
+                  <Pause className="w-6 h-6 fill-white" />
+                ) : (
+                  <Play className="w-6 h-6 fill-white ml-1" />
+                )}
+              </button>
+              <div className="absolute top-3 left-3 bg-rose-600/90 text-white text-[11px] font-bold px-2.5 py-1 rounded-full backdrop-blur-xs flex items-center gap-1 shadow-md">
+                <Check className="w-3.5 h-3.5 stroke-[3]" /> Video Ready ({formatSeconds(recordingSeconds)})
               </div>
             </div>
           ) : (
@@ -230,7 +465,7 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
                 </div>
               )}
 
-              {/* Viewfinder crosshairs and guidelines */}
+              {/* Viewfinder crosshairs */}
               <div className="absolute inset-6 border border-white/20 rounded-2xl pointer-events-none flex flex-col justify-between p-2">
                 <div className="flex justify-between">
                   <div className="w-3 h-3 border-t-2 border-l-2 border-emerald-400 rounded-tl-sm" />
@@ -243,26 +478,37 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
               </div>
 
               {/* Live recording indicator */}
-              <div className="absolute top-3 left-3 flex items-center gap-1.5 bg-black/60 backdrop-blur-xs px-2.5 py-1 rounded-full text-[10px] font-bold text-white tracking-wider">
-                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                LIVE
+              <div className="absolute top-3 left-3 flex items-center gap-2">
+                {isRecording ? (
+                  <div className="flex items-center gap-1.5 bg-rose-600/90 text-white backdrop-blur-xs px-3 py-1 rounded-full text-xs font-black tracking-wider animate-pulse shadow-lg">
+                    <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping" />
+                    <span>REC {formatSeconds(recordingSeconds)} / {formatSeconds(MAX_RECORDING_SECONDS)}</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 bg-black/60 backdrop-blur-xs px-2.5 py-1 rounded-full text-[10px] font-bold text-white tracking-wider">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                    LIVE
+                  </div>
+                )}
               </div>
 
               {/* Switch camera button */}
-              <button
-                onClick={toggleFacingMode}
-                className="absolute top-3 right-3 p-2 rounded-full bg-black/60 hover:bg-black/80 text-white backdrop-blur-xs transition-colors"
-                title="Switch Camera (Front / Back)"
-              >
-                <RefreshCw className="w-4 h-4" />
-              </button>
+              {!isRecording && (
+                <button
+                  onClick={toggleFacingMode}
+                  className="absolute top-3 right-3 p-2 rounded-full bg-black/60 hover:bg-black/80 text-white backdrop-blur-xs transition-colors"
+                  title="Switch Camera (Front / Back)"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </button>
+              )}
             </div>
           )}
         </div>
 
         {/* Bottom Shutter & Controls */}
         <div className="p-4 bg-neutral-950 border-t border-neutral-800 flex items-center justify-between">
-          {capturedImage ? (
+          {isReviewing ? (
             /* Review state actions */
             <div className="w-full grid grid-cols-2 gap-3">
               <button
@@ -270,16 +516,16 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
                 onClick={handleRetake}
                 className="py-3 px-4 rounded-2xl bg-neutral-800 hover:bg-neutral-700 text-white font-semibold text-xs flex items-center justify-center gap-2 transition-colors"
               >
-                <RefreshCw className="w-4 h-4" />
+                <RotateCcw className="w-4 h-4" />
                 <span>Retake</span>
               </button>
               <button
-                id="camera-use-photo-btn"
-                onClick={handleConfirm}
+                id="camera-use-media-btn"
+                onClick={handleConfirmMedia}
                 className="py-3 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition-all active:scale-[0.98]"
               >
                 <Check className="w-4 h-4 stroke-[3]" />
-                <span>Use Photo</span>
+                <span>Use {captureMode === 'photo' ? 'Photo' : 'Video'}</span>
               </button>
             </div>
           ) : (
@@ -290,23 +536,49 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
                   onClose();
                   onFallbackToFilePicker();
                 }}
-                className="text-[11px] font-semibold text-neutral-400 hover:text-white transition-colors"
+                disabled={isRecording}
+                className="text-[11px] font-semibold text-neutral-400 hover:text-white transition-colors disabled:opacity-30"
               >
                 Use File
               </button>
 
-              {/* Large circular shutter button */}
-              <button
-                id="camera-shutter-btn"
-                onClick={handleSnap}
-                disabled={Boolean(cameraError) || isStartingCamera}
-                className="relative w-16 h-16 rounded-full border-4 border-white flex items-center justify-center bg-transparent active:scale-90 transition-transform group disabled:opacity-40 disabled:cursor-not-allowed"
-                aria-label="Snap photo"
-              >
-                <div className="w-12 h-12 rounded-full bg-white group-hover:bg-emerald-400 group-active:scale-95 transition-colors" />
-              </button>
+              {captureMode === 'photo' ? (
+                /* Photo Shutter Button */
+                <button
+                  id="camera-shutter-photo-btn"
+                  onClick={handleSnapPhoto}
+                  disabled={Boolean(cameraError) || isStartingCamera}
+                  className="relative w-16 h-16 rounded-full border-4 border-white flex items-center justify-center bg-transparent active:scale-90 transition-transform group disabled:opacity-40 disabled:cursor-not-allowed"
+                  aria-label="Snap photo"
+                >
+                  <div className="w-12 h-12 rounded-full bg-white group-hover:bg-emerald-400 group-active:scale-95 transition-colors" />
+                </button>
+              ) : (
+                /* Video Record / Stop Button */
+                <button
+                  id="camera-shutter-video-btn"
+                  onClick={isRecording ? stopRecording : startRecording}
+                  disabled={Boolean(cameraError) || isStartingCamera}
+                  className={`relative w-16 h-16 rounded-full border-4 flex items-center justify-center active:scale-90 transition-all group disabled:opacity-40 disabled:cursor-not-allowed ${
+                    isRecording
+                      ? 'border-rose-500 bg-rose-500/20'
+                      : 'border-white bg-transparent'
+                  }`}
+                  aria-label={isRecording ? 'Stop recording' : 'Start recording'}
+                >
+                  {isRecording ? (
+                    <div className="w-6 h-6 rounded-md bg-rose-500 shadow-md group-hover:scale-95 transition-transform" />
+                  ) : (
+                    <div className="w-12 h-12 rounded-full bg-rose-600 group-hover:bg-rose-500 group-active:scale-95 transition-colors" />
+                  )}
+                </button>
+              )}
 
-              <div className="w-12" />
+              <div className="w-12 text-right">
+                <span className="text-[10px] uppercase font-bold text-neutral-500">
+                  {captureMode}
+                </span>
+              </div>
             </div>
           )}
         </div>

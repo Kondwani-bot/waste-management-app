@@ -3,6 +3,7 @@ import { OnboardingCarousel } from './components/OnboardingCarousel';
 import { ReportFlow } from './components/ReportFlow';
 import { ThankYouModal } from './components/ThankYouModal';
 import { AdminView } from './components/AdminView';
+import { CouncilHelpModal } from './components/CouncilHelpModal';
 import { WasteReport, AppView } from './types';
 import {
   getStoredReports,
@@ -114,6 +115,9 @@ export default function App() {
               onOpenHelp={() => setShowOnboarding(true)}
             />
           </main>
+
+          {/* Floating chatbot-style Council Help Ball */}
+          <CouncilHelpModal />
 
           {/* Footer with Transparent Admin Button as requested */}
           <footer className="w-full max-w-md mx-auto py-4 flex flex-col items-center justify-center gap-2">

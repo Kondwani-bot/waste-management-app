@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import {
   Camera,
   Upload,
+  Video,
   MapPin,
   Send,
   Sparkles,
@@ -17,32 +18,19 @@ import {
 import { ZAMBIA_PROVINCES } from '../data/mockData';
 import { saveNewReport } from '../utils/storage';
 import { CameraCaptureModal } from './CameraCaptureModal';
+import { OptionalContactModal } from './OptionalContactModal';
 
 interface ReportFlowProps {
   onReportSubmitted: () => void;
   onOpenHelp: () => void;
 }
 
-const DEMO_PHOTOS = [
-  {
-    label: 'Street Pile',
-    url: 'https://images.unsplash.com/photo-1605600659908-0ef719419d41?auto=format&fit=crop&w=600&q=80',
-  },
-  {
-    label: 'Overflow Bin',
-    url: 'https://images.unsplash.com/photo-1532996122724-e3c354a0b15b?auto=format&fit=crop&w=600&q=80',
-  },
-  {
-    label: 'Dumping Site',
-    url: 'https://images.unsplash.com/photo-1618477461853-cf6ed80faba5?auto=format&fit=crop&w=600&q=80',
-  },
-];
-
 export const ReportFlow: React.FC<ReportFlowProps> = ({
   onReportSubmitted,
   onOpenHelp,
 }) => {
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const [mediaType, setMediaType] = useState<'photo' | 'video'>('photo');
   const [locationName, setLocationName] = useState<string>('');
   const [province, setProvince] = useState<string>('Lusaka');
   const [latitude, setLatitude] = useState<number | null>(null);
@@ -51,17 +39,19 @@ export const ReportFlow: React.FC<ReportFlowProps> = ({
   const [locationStatus, setLocationStatus] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [isCameraModalOpen, setIsCameraModalOpen] = useState<boolean>(false);
+  const [isContactModalOpen, setIsContactModalOpen] = useState<boolean>(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
-  const handlePhotoCaptured = (dataUrl: string) => {
-    setPhotoUrl(dataUrl);
+  const handleMediaCaptured = (mediaUrl: string, type: 'photo' | 'video') => {
+    setPhotoUrl(mediaUrl);
+    setMediaType(type);
     setIsCameraModalOpen(false);
   };
 
   const handleTakePhotoClick = () => {
-    // If navigator.mediaDevices.getUserMedia exists, open the interactive live camera modal (works on laptops and mobiles)
+    // If navigator.mediaDevices.getUserMedia exists, open the interactive live camera & recorder modal
     if (navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function') {
       setIsCameraModalOpen(true);
     } else {
@@ -70,10 +60,14 @@ export const ReportFlow: React.FC<ReportFlowProps> = ({
     }
   };
 
-  // Handle image upload from file or camera
+  // Handle image/video upload from file or native camera
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      const isVideo = file.type.startsWith('video/');
+      const detectedType = isVideo ? 'video' : 'photo';
+      setMediaType(detectedType);
+
       const reader = new FileReader();
       reader.onload = () => {
         if (typeof reader.result === 'string') {
@@ -82,6 +76,7 @@ export const ReportFlow: React.FC<ReportFlowProps> = ({
       };
       reader.readAsDataURL(file);
     }
+    e.target.value = '';
   };
 
   // Live Location fetcher (Google/Browser live location tool)
@@ -152,16 +147,26 @@ export const ReportFlow: React.FC<ReportFlowProps> = ({
 
   const handleSubmit = () => {
     if (!photoUrl) return;
+    // Open prompt asking if citizen wants to provide optional contact details
+    setIsContactModalOpen(true);
+  };
 
+  const handleFinalizeReport = (name?: string, phone?: string) => {
+    setIsContactModalOpen(false);
     setIsSubmitting(true);
+
     const finalLocation = locationName.trim() || (latitude ? `GPS: ${latitude.toFixed(4)}, ${longitude?.toFixed(4)}` : 'Lusaka, Zambia');
 
     saveNewReport({
       photoUrl,
+      mediaUrl: photoUrl,
+      mediaType,
       locationName: finalLocation,
       province,
       latitude: latitude ?? -15.4208,
       longitude: longitude ?? 28.2833,
+      reporterName: name,
+      reporterPhone: phone,
     });
 
     setTimeout(() => {
@@ -172,6 +177,7 @@ export const ReportFlow: React.FC<ReportFlowProps> = ({
 
   const handleReset = () => {
     setPhotoUrl(null);
+    setMediaType('photo');
     setLocationName('');
     setLatitude(null);
     setLongitude(null);
@@ -219,10 +225,10 @@ export const ReportFlow: React.FC<ReportFlowProps> = ({
           }`}
         >
           <div className="flex items-center gap-1 mb-0.5">
-            <span className="text-[11px] font-extrabold uppercase tracking-wider">1. Snap</span>
+            <span className="text-[11px] font-extrabold uppercase tracking-wider">1. Media</span>
             {photoUrl && <Check className="w-3 h-3 text-emerald-600 stroke-[3]" />}
           </div>
-          <span className="text-[10px] text-neutral-400 font-medium">Photo</span>
+          <span className="text-[10px] text-neutral-400 font-medium">Photo/Video</span>
         </div>
 
         <div
@@ -254,14 +260,14 @@ export const ReportFlow: React.FC<ReportFlowProps> = ({
       </div>
 
       <div className="space-y-4">
-        {/* STEP 1: SNAP (Camera or Upload) */}
+        {/* STEP 1: SNAP OR RECORD (Camera or Upload) */}
         <div className="bg-white rounded-3xl p-5 border border-neutral-200 shadow-xs">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <span className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-700 text-xs font-black flex items-center justify-center">
                 1
               </span>
-              <span className="text-sm font-bold text-neutral-900">Snap Waste Photo</span>
+              <span className="text-sm font-bold text-neutral-900">Snap or Record Waste</span>
             </div>
             {photoUrl && (
               <button
@@ -274,52 +280,76 @@ export const ReportFlow: React.FC<ReportFlowProps> = ({
           </div>
 
           {photoUrl ? (
-            /* Selected Image Preview */
-            <div className="relative rounded-2xl overflow-hidden border border-neutral-200 shadow-inner bg-neutral-900 h-56 group">
-              <img
-                src={photoUrl}
-                alt="Selected waste"
-                className="w-full h-full object-cover"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20 pointer-events-none" />
-              <div className="absolute bottom-3 left-3 bg-emerald-600 text-white text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1 shadow-md">
-                <Check className="w-3.5 h-3.5 stroke-[3]" /> Photo Ready
+            /* Selected Media Preview (Photo or Video) */
+            <div className="relative rounded-2xl overflow-hidden border border-neutral-200 shadow-inner bg-neutral-950 h-60 group flex items-center justify-center">
+              {mediaType === 'video' ? (
+                <video
+                  src={photoUrl}
+                  controls
+                  playsInline
+                  className="w-full h-full object-contain"
+                />
+              ) : (
+                <img
+                  src={photoUrl}
+                  alt="Selected waste"
+                  className="w-full h-full object-cover"
+                />
+              )}
+
+              {/* Status Badge */}
+              <div className="absolute top-3 left-3">
+                {mediaType === 'video' ? (
+                  <span className="bg-rose-600/90 text-white text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1.5 shadow-md backdrop-blur-xs">
+                    <Video className="w-3.5 h-3.5" /> Video Ready
+                  </span>
+                ) : (
+                  <span className="bg-emerald-600/90 text-white text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1 shadow-md backdrop-blur-xs">
+                    <Check className="w-3.5 h-3.5 stroke-[3]" /> Photo Ready
+                  </span>
+                )}
               </div>
             </div>
           ) : (
             /* Snap Controls */
             <div>
               <div className="grid grid-cols-2 gap-3 mb-3">
-                {/* Real Camera Button (Live webcam on laptops, native capture on mobile) */}
+                {/* Real Camera Button (Live webcam & video recorder on laptops, native capture on mobile) */}
                 <button
                   id="snap-camera-btn"
                   onClick={handleTakePhotoClick}
-                  className="py-6 px-4 rounded-2xl border-2 border-dashed border-emerald-300 bg-emerald-50/50 hover:bg-emerald-50 text-emerald-800 transition-all flex flex-col items-center justify-center gap-2 active:scale-[0.98]"
+                  className="py-5 px-3 rounded-2xl border-2 border-dashed border-emerald-300 bg-emerald-50/50 hover:bg-emerald-50 text-emerald-800 transition-all flex flex-col items-center justify-center gap-1.5 active:scale-[0.98]"
                 >
                   <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-600/20">
                     <Camera className="w-6 h-6 stroke-[2.2]" />
                   </div>
-                  <span className="text-xs font-extrabold tracking-tight">Take Photo</span>
+                  <div className="text-center">
+                    <span className="text-xs font-extrabold tracking-tight block">Take Photo / Video</span>
+                    <span className="text-[10px] text-emerald-600 font-semibold">Live Camera</span>
+                  </div>
                 </button>
 
-                {/* File Upload Button */}
+                {/* File Upload Button (images & videos supported) */}
                 <button
                   id="snap-upload-btn"
                   onClick={() => fileInputRef.current?.click()}
-                  className="py-6 px-4 rounded-2xl border-2 border-dashed border-neutral-300 bg-neutral-50/70 hover:bg-neutral-100/70 text-neutral-700 transition-all flex flex-col items-center justify-center gap-2 active:scale-[0.98]"
+                  className="py-5 px-3 rounded-2xl border-2 border-dashed border-neutral-300 bg-neutral-50/70 hover:bg-neutral-100/70 text-neutral-700 transition-all flex flex-col items-center justify-center gap-1.5 active:scale-[0.98]"
                 >
                   <div className="w-12 h-12 rounded-2xl bg-neutral-800 text-white flex items-center justify-center shadow-md">
                     <Upload className="w-5 h-5 stroke-[2.2]" />
                   </div>
-                  <span className="text-xs font-extrabold tracking-tight">Upload File</span>
+                  <div className="text-center">
+                    <span className="text-xs font-extrabold tracking-tight block">Upload File</span>
+                    <span className="text-[10px] text-neutral-400 font-semibold">Photo or Video</span>
+                  </div>
                 </button>
               </div>
 
-              {/* Hidden native inputs */}
+              {/* Hidden native inputs supporting both images and videos */}
               <input
                 ref={cameraInputRef}
                 type="file"
-                accept="image/*"
+                accept="image/*,video/*"
                 capture="environment"
                 className="hidden"
                 onChange={handleFileChange}
@@ -327,37 +357,10 @@ export const ReportFlow: React.FC<ReportFlowProps> = ({
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*"
+                accept="image/*,video/*"
                 className="hidden"
                 onChange={handleFileChange}
               />
-
-              {/* Instant Demo sample photos for quick presentation */}
-              <div className="mt-3 pt-3 border-t border-neutral-100">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 block mb-2">
-                  Or pick demo waste photo:
-                </span>
-                <div className="grid grid-cols-3 gap-2">
-                  {DEMO_PHOTOS.map((demo, idx) => (
-                    <button
-                      key={idx}
-                      id={`demo-photo-btn-${idx}`}
-                      onClick={() => setPhotoUrl(demo.url)}
-                      className="group relative h-16 rounded-xl overflow-hidden border border-neutral-200 hover:border-emerald-500 transition-all text-left"
-                    >
-                      <img
-                        src={demo.url}
-                        alt={demo.label}
-                        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
-                      />
-                      <div className="absolute inset-0 bg-black/40 group-hover:bg-black/25 transition-colors" />
-                      <span className="absolute bottom-1 left-1 right-1 text-[9px] font-bold text-white truncate drop-shadow-sm px-1">
-                        {demo.label}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
             </div>
           )}
         </div>
@@ -497,8 +500,15 @@ export const ReportFlow: React.FC<ReportFlowProps> = ({
       <CameraCaptureModal
         isOpen={isCameraModalOpen}
         onClose={() => setIsCameraModalOpen(false)}
-        onPhotoCaptured={handlePhotoCaptured}
+        onMediaCaptured={handleMediaCaptured}
         onFallbackToFilePicker={() => cameraInputRef.current?.click()}
+      />
+
+      {/* Post-Submit Optional Contact Details Question Modal */}
+      <OptionalContactModal
+        isOpen={isContactModalOpen}
+        onSaveContact={(name, phone) => handleFinalizeReport(name, phone)}
+        onSkipAnonymous={() => handleFinalizeReport(undefined, undefined)}
       />
     </div>
   );

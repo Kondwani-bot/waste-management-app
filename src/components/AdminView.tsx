@@ -17,6 +17,12 @@ import {
   Search,
   X,
   RotateCcw,
+  Video,
+  Camera,
+  Play,
+  User,
+  Shield,
+  PhoneCall,
 } from 'lucide-react';
 
 interface AdminViewProps {
@@ -34,7 +40,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
   const [activeFilter, setActiveFilter] = useState<'all' | 'pending' | 'completed'>('all');
   const [selectedProvince, setSelectedProvince] = useState<string>('all');
   const [searchLocation, setSearchLocation] = useState<string>('');
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [previewMedia, setPreviewMedia] = useState<{ url: string; type: 'photo' | 'video' } | null>(null);
 
   const pendingCount = reports.filter((r) => r.status === 'pending').length;
   const completedCount = reports.filter((r) => r.status === 'completed').length;
@@ -68,12 +74,14 @@ export const AdminView: React.FC<AdminViewProps> = ({
         if (!prov.includes(selectedProvince.toLowerCase())) return false;
       }
 
-      // Location filter/search
+      // Location & Reporter search
       if (searchLocation.trim()) {
         const query = searchLocation.trim().toLowerCase();
         const loc = (r.locationName || '').toLowerCase();
         const prov = (r.province || '').toLowerCase();
-        if (!loc.includes(query) && !prov.includes(query)) return false;
+        const name = (r.reporterName || '').toLowerCase();
+        const phone = (r.reporterPhone || '').toLowerCase();
+        if (!loc.includes(query) && !prov.includes(query) && !name.includes(query) && !phone.includes(query)) return false;
       }
 
       return true;
@@ -312,114 +320,200 @@ export const AdminView: React.FC<AdminViewProps> = ({
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {filteredReports.map((report) => (
-              <div
-                key={report.id}
-                id={`admin-task-card-${report.id}`}
-                className={`bg-white rounded-3xl border transition-all shadow-xs overflow-hidden flex flex-col justify-between ${
-                  report.status === 'completed'
-                    ? 'border-neutral-200 opacity-80'
-                    : 'border-neutral-200 hover:border-emerald-300 hover:shadow-md'
-                }`}
-              >
-                <div>
-                  {/* Photo area */}
-                  <div className="relative w-full h-52 bg-neutral-900 group overflow-hidden">
-                    <img
-                      src={report.photoUrl}
-                      alt="Reported waste site"
-                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105 cursor-pointer"
-                      onClick={() => setPreviewImage(report.photoUrl)}
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-black/30 pointer-events-none" />
+            {filteredReports.map((report) => {
+              const mediaUrl = report.mediaUrl || report.photoUrl;
+              const isVid = report.mediaType === 'video' || (report.mediaUrl && report.mediaUrl.endsWith('.mp4'));
 
-                    {/* Status badge */}
-                    <div className="absolute top-3 left-3">
-                      {report.status === 'completed' ? (
-                        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-emerald-600 text-white shadow-md">
-                          <Check className="w-3.5 h-3.5 stroke-[3]" /> Completed
-                        </span>
+              return (
+                <div
+                  key={report.id}
+                  id={`admin-task-card-${report.id}`}
+                  className={`bg-white rounded-3xl border transition-all shadow-xs overflow-hidden flex flex-col justify-between ${
+                    report.status === 'completed'
+                      ? 'border-neutral-200 opacity-80'
+                      : 'border-neutral-200 hover:border-emerald-300 hover:shadow-md'
+                  }`}
+                >
+                  <div>
+                    {/* Media area (Photo or Video) */}
+                    <div className="relative w-full h-52 bg-neutral-900 group overflow-hidden flex items-center justify-center">
+                      {isVid ? (
+                        <>
+                          <video
+                            src={mediaUrl}
+                            playsInline
+                            muted
+                            className="w-full h-full object-cover"
+                          />
+                          {/* Play overlay button */}
+                          <button
+                            type="button"
+                            onClick={() => setPreviewMedia({ url: mediaUrl, type: 'video' })}
+                            className="absolute inset-0 m-auto w-12 h-12 rounded-full bg-black/60 hover:bg-rose-600 text-white flex items-center justify-center backdrop-blur-xs transition-all shadow-xl cursor-pointer hover:scale-110 active:scale-95"
+                            title="Play waste video"
+                          >
+                            <Play className="w-5 h-5 fill-white ml-0.5" />
+                          </button>
+                        </>
                       ) : (
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-500 text-white shadow-md">
-                          <AlertCircle className="w-3.5 h-3.5" /> Pending Task
-                        </span>
+                        <img
+                          src={mediaUrl}
+                          alt="Reported waste site"
+                          className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105 cursor-pointer"
+                          onClick={() => setPreviewMedia({ url: mediaUrl, type: 'photo' })}
+                        />
                       )}
-                    </div>
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-black/30 pointer-events-none" />
 
-                    {/* Enlarge click hint */}
-                    <button
-                      onClick={() => setPreviewImage(report.photoUrl)}
-                      className="absolute top-3 right-3 p-2 rounded-full bg-black/50 text-white hover:bg-black/75 transition-colors backdrop-blur-xs"
-                      title="Enlarge photo"
-                    >
-                      <Eye className="w-4 h-4" />
-                    </button>
-
-                    {/* Province badge on photo */}
-                    <div className="absolute bottom-3 left-3 text-white">
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-white/20 backdrop-blur-md text-xs font-bold tracking-wide">
-                        <Building className="w-3.5 h-3.5" /> {report.province} Province
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Details section */}
-                  <div className="p-4 space-y-3">
-                    {/* Location */}
-                    <div className="flex items-start gap-2.5">
-                      <div className="p-1.5 rounded-lg bg-emerald-50 text-emerald-700 mt-0.5 shrink-0">
-                        <MapPin className="w-4 h-4" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider block">
-                          Location
-                        </span>
-                        <p className="text-sm font-bold text-neutral-900 truncate">
-                          {report.locationName || 'Unknown Location'}
-                        </p>
-                        {report.latitude && report.longitude && (
-                          <span className="text-[11px] text-neutral-400 font-mono">
-                            GPS: {report.latitude.toFixed(5)}, {report.longitude.toFixed(5)}
+                      {/* Status & Media type badges */}
+                      <div className="absolute top-3 left-3 flex items-center gap-1.5">
+                        {report.status === 'completed' ? (
+                          <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-emerald-600 text-white shadow-md">
+                            <Check className="w-3.5 h-3.5 stroke-[3]" /> Completed
                           </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-500 text-white shadow-md">
+                            <AlertCircle className="w-3.5 h-3.5" /> Pending Task
+                          </span>
+                        )}
+
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-black/60 text-white backdrop-blur-xs shadow-md">
+                          {isVid ? (
+                            <>
+                              <Video className="w-3 h-3 text-rose-400" /> Video
+                            </>
+                          ) : (
+                            <>
+                              <Camera className="w-3 h-3 text-emerald-400" /> Photo
+                            </>
+                          )}
+                        </span>
+                      </div>
+
+                      {/* Enlarge / Fullscreen click hint */}
+                      <button
+                        onClick={() => setPreviewMedia({ url: mediaUrl, type: isVid ? 'video' : 'photo' })}
+                        className="absolute top-3 right-3 p-2 rounded-full bg-black/50 text-white hover:bg-black/75 transition-colors backdrop-blur-xs"
+                        title={isVid ? 'Watch full video' : 'Enlarge photo'}
+                      >
+                        <Eye className="w-4 h-4" />
+                      </button>
+
+                      {/* Province badge on media */}
+                      <div className="absolute bottom-3 left-3 text-white">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-white/20 backdrop-blur-md text-xs font-bold tracking-wide">
+                          <Building className="w-3.5 h-3.5" /> {report.province} Province
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Details section */}
+                    <div className="p-4 space-y-3">
+                      {/* Location */}
+                      <div className="flex items-start gap-2.5">
+                        <div className="p-1.5 rounded-lg bg-emerald-50 text-emerald-700 mt-0.5 shrink-0">
+                          <MapPin className="w-4 h-4" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider block">
+                            Location
+                          </span>
+                          <p className="text-sm font-bold text-neutral-900 truncate">
+                            {report.locationName || 'Unknown Location'}
+                          </p>
+                          {report.latitude && report.longitude && (
+                            <span className="text-[11px] text-neutral-400 font-mono">
+                              GPS: {report.latitude.toFixed(5)}, {report.longitude.toFixed(5)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Time photo/video was reported */}
+                      <div className="flex items-center gap-2.5 text-xs text-neutral-600 bg-neutral-50 px-3 py-2 rounded-xl">
+                        <Clock className="w-4 h-4 text-neutral-400 shrink-0" />
+                        <div>
+                          <span className="text-[10px] uppercase font-bold text-neutral-400 block">
+                            Reported At
+                          </span>
+                          <span className="font-semibold text-neutral-800">
+                            {formatTimestamp(report.timestamp)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Reporter Contact Info (Anonymous vs Provided) */}
+                      <div className="flex items-center justify-between text-xs px-3 py-2.5 rounded-xl border border-neutral-200/80 bg-neutral-50/70">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          {report.reporterName || report.reporterPhone ? (
+                            <>
+                              <div className="w-7 h-7 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
+                                <User className="w-4 h-4" />
+                              </div>
+                              <div className="min-w-0">
+                                <span className="text-[10px] uppercase font-bold text-blue-700 block leading-tight">
+                                  Contact Provided
+                                </span>
+                                <p className="font-bold text-neutral-800 truncate text-xs">
+                                  {report.reporterName || 'Citizen'}
+                                </p>
+                                {report.reporterPhone && (
+                                  <p className="text-[11px] font-mono text-neutral-500">
+                                    {report.reporterPhone}
+                                  </p>
+                                )}
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="w-7 h-7 rounded-lg bg-neutral-200 text-neutral-600 flex items-center justify-center shrink-0">
+                                <Shield className="w-4 h-4" />
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase font-bold text-neutral-400 block leading-tight">
+                                  Reporter Identity
+                                </span>
+                                <span className="font-bold text-neutral-700 text-xs">100% Anonymous</span>
+                              </div>
+                            </>
+                          )}
+                        </div>
+
+                        {report.reporterPhone && (
+                          <a
+                            href={`tel:${report.reporterPhone}`}
+                            className="p-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 transition-colors shrink-0 flex items-center gap-1 text-[11px] font-bold"
+                            title="Call citizen"
+                          >
+                            <PhoneCall className="w-3.5 h-3.5" />
+                            <span className="hidden sm:inline">Call</span>
+                          </a>
                         )}
                       </div>
                     </div>
+                  </div>
 
-                    {/* Time photo was taken */}
-                    <div className="flex items-center gap-2.5 text-xs text-neutral-600 bg-neutral-50 px-3 py-2 rounded-xl">
-                      <Clock className="w-4 h-4 text-neutral-400 shrink-0" />
-                      <div>
-                        <span className="text-[10px] uppercase font-bold text-neutral-400 block">
-                          Reported At
-                        </span>
-                        <span className="font-semibold text-neutral-800">
-                          {formatTimestamp(report.timestamp)}
-                        </span>
+                  {/* Footer Action: Complete Task */}
+                  <div className="p-4 pt-2 border-t border-neutral-100 bg-neutral-50/50">
+                    {report.status === 'completed' ? (
+                      <div className="w-full py-2.5 px-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center justify-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        <span>Cleaned & Completed</span>
                       </div>
-                    </div>
+                    ) : (
+                      <button
+                        id={`complete-task-btn-${report.id}`}
+                        onClick={() => setSelectedReportId(report.id)}
+                        className="w-full py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all active:scale-[0.98]"
+                      >
+                        <Check className="w-4 h-4 stroke-[3]" />
+                        <span>Complete Task</span>
+                      </button>
+                    )}
                   </div>
                 </div>
-
-                {/* Footer Action: Complete Task */}
-                <div className="p-4 pt-2 border-t border-neutral-100 bg-neutral-50/50">
-                  {report.status === 'completed' ? (
-                    <div className="w-full py-2.5 px-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center justify-center gap-1.5">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                      <span>Cleaned & Completed</span>
-                    </div>
-                  ) : (
-                    <button
-                      id={`complete-task-btn-${report.id}`}
-                      onClick={() => setSelectedReportId(report.id)}
-                      className="w-full py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all active:scale-[0.98]"
-                    >
-                      <Check className="w-4 h-4 stroke-[3]" />
-                      <span>Complete Task</span>
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </main>
@@ -435,21 +529,31 @@ export const AdminView: React.FC<AdminViewProps> = ({
         onCancel={() => setSelectedReportId(null)}
       />
 
-      {/* Lightbox for photo inspection */}
-      {previewImage && (
+      {/* Lightbox for photo/video inspection */}
+      {previewMedia && (
         <div
           className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4"
-          onClick={() => setPreviewImage(null)}
+          onClick={() => setPreviewMedia(null)}
         >
-          <div className="max-w-3xl max-h-[90vh] relative">
-            <img
-              src={previewImage}
-              alt="Enlarged waste site"
-              className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl"
-            />
+          <div className="max-w-3xl w-full max-h-[90vh] relative flex flex-col items-center justify-center" onClick={(e) => e.stopPropagation()}>
+            {previewMedia.type === 'video' ? (
+              <video
+                src={previewMedia.url}
+                controls
+                autoPlay
+                playsInline
+                className="max-w-full max-h-[85vh] rounded-2xl shadow-2xl bg-black"
+              />
+            ) : (
+              <img
+                src={previewMedia.url}
+                alt="Enlarged waste site"
+                className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl"
+              />
+            )}
             <button
-              onClick={() => setPreviewImage(null)}
-              className="absolute top-3 right-3 px-3 py-1.5 rounded-full bg-white/20 text-white font-bold text-xs hover:bg-white/40 transition-colors backdrop-blur-md"
+              onClick={() => setPreviewMedia(null)}
+              className="absolute top-3 right-3 px-3 py-1.5 rounded-full bg-white/20 text-white font-bold text-xs hover:bg-white/40 transition-colors backdrop-blur-md cursor-pointer"
             >
               Close
             </button>

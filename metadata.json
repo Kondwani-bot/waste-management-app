@@ -3,6 +3,7 @@
   "description": "Simple 3-step waste reporting tool to snap, locate, and send reports anonymously.",
   "requestFramePermissions": [
     "camera",
+    "microphone",
     "geolocation"
   ],
   "majorCapabilities": [
