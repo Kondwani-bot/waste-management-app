@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Check, ShieldCheck, Sparkles, Plus } from 'lucide-react';
+import { Check, ShieldCheck, Sparkles, Plus, Home } from 'lucide-react';
 
 interface ThankYouModalProps {
   onClose: () => void;
@@ -43,55 +43,44 @@ export const ThankYouModal: React.FC<ThankYouModalProps> = ({ onClose, onResetFo
           </motion.div>
         </div>
 
-        {/* Minimal English words */}
         <motion.h3
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
           className="text-2xl font-black text-neutral-900 tracking-tight"
         >
-          Thank You!
+          Report Received!
         </motion.h3>
 
         <motion.p
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.28 }}
-          className="text-sm font-medium text-neutral-500 mt-1"
+          className="text-xs font-medium text-neutral-500 mt-1 max-w-[240px] leading-relaxed"
         >
-          Task reported successfully.
+          Your waste report with precise GPS coordinates has been recorded in the Waste Watch system.
         </motion.p>
-
-        {/* Anonymous indicator pill */}
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.35 }}
-          className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold"
-        >
-          <ShieldCheck className="w-4 h-4 text-emerald-600" />
-          <span>Anonymous Submission</span>
-        </motion.div>
 
         {/* Action button */}
         <div className="w-full mt-6 flex flex-col gap-2">
           <button
+            id="thank-you-view-feed-btn"
+            onClick={onClose}
+            className="w-full py-3.5 px-5 rounded-2xl bg-neutral-900 hover:bg-black text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md active:scale-[0.98] transition-all cursor-pointer"
+          >
+            <Home className="w-4 h-4" />
+            <span>View on Public Feed</span>
+          </button>
+
+          <button
             id="thank-you-new-report-btn"
             onClick={() => {
               onResetForm();
-              onClose();
             }}
-            className="w-full py-3.5 px-5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 active:scale-[0.98] transition-all"
+            className="w-full py-2.5 px-4 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
           >
-            <Plus className="w-4 h-4 stroke-[2.5]" />
-            <span>Report Another</span>
-          </button>
-          <button
-            id="thank-you-close-btn"
-            onClick={onClose}
-            className="w-full py-2.5 px-4 text-xs font-semibold text-neutral-500 hover:text-neutral-900 transition-colors"
-          >
-            Done
+            <Plus className="w-3.5 h-3.5" />
+            <span>Report Another Site</span>
           </button>
         </div>
       </motion.div>

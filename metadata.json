@@ -1,6 +1,6 @@
 {
-  "name": "Waste Management",
-  "description": "Simple 3-step waste reporting tool to snap, locate, and send reports anonymously.",
+  "name": "Waste Watch",
+  "description": "Waste Watch: Community waste reporting and clean-up tracking platform with precise GPS metadata and priority tier triage.",
   "requestFramePermissions": [
     "camera",
     "microphone",

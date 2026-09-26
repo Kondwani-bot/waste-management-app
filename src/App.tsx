@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { OnboardingCarousel } from './components/OnboardingCarousel';
+import { HomeFeed } from './components/HomeFeed';
 import { ReportFlow } from './components/ReportFlow';
 import { ThankYouModal } from './components/ThankYouModal';
 import { AdminView } from './components/AdminView';
@@ -8,13 +9,14 @@ import { WasteReport, AppView } from './types';
 import {
   getStoredReports,
   completeReportTask,
+  toggleReportLike,
   hasSeenOnboarding,
   markOnboardingSeen,
 } from './utils/storage';
-import { Shield, Lock } from 'lucide-react';
+import { Lock, Home, Camera, Sparkles } from 'lucide-react';
 
 export default function App() {
-  const [currentView, setCurrentView] = useState<AppView>('reporter');
+  const [currentView, setCurrentView] = useState<AppView>('home');
   const [reports, setReports] = useState<WasteReport[]>([]);
   const [showOnboarding, setShowOnboarding] = useState<boolean>(false);
   const [showThankYou, setShowThankYou] = useState<boolean>(false);
@@ -28,8 +30,10 @@ export default function App() {
       const hash = window.location.hash.toLowerCase();
       if (path === '/admin' || path.endsWith('/admin') || hash === '#admin') {
         setCurrentView('admin');
-      } else {
+      } else if (hash === '#report') {
         setCurrentView('reporter');
+      } else {
+        setCurrentView('home');
       }
     };
 
@@ -73,10 +77,17 @@ export default function App() {
     setReports(updated);
   };
 
+  const handleToggleLike = (reportId: string) => {
+    const updated = toggleReportLike(reportId);
+    setReports(updated);
+  };
+
   const navigateTo = (view: AppView) => {
     setCurrentView(view);
     if (view === 'admin') {
       window.history.pushState(null, '', '#admin');
+    } else if (view === 'reporter') {
+      window.history.pushState(null, '', '#report');
     } else {
       window.history.pushState(null, '', window.location.pathname.replace(/\/admin$/, '') || '/');
     }
@@ -92,28 +103,72 @@ export default function App() {
       {/* Thank You Animation Modal */}
       {showThankYou && (
         <ThankYouModal
-          onClose={() => setShowThankYou(false)}
+          onClose={() => {
+            setShowThankYou(false);
+            navigateTo('home');
+          }}
           onResetForm={() => {
             setReportKey((prev) => prev + 1);
+            setShowThankYou(false);
+            navigateTo('home');
           }}
         />
       )}
 
-      {/* View Switcher */}
+      {/* Main View Switcher */}
       {currentView === 'admin' ? (
         <AdminView
           reports={reports}
           onCompleteTask={handleCompleteTask}
-          onNavigateToUser={() => navigateTo('reporter')}
+          onNavigateToUser={() => navigateTo('home')}
         />
       ) : (
-        <div className="flex-1 flex flex-col justify-between p-4 pt-6 sm:pt-8">
-          <main className="w-full">
-            <ReportFlow
-              key={reportKey}
-              onReportSubmitted={handleReportSubmitted}
-              onOpenHelp={() => setShowOnboarding(true)}
-            />
+        <div className="flex-1 flex flex-col justify-between p-4 pt-4 sm:pt-6">
+          {/* Navigation Pill Bar (Home vs Report) */}
+          <div className="w-full max-w-sm mx-auto mb-4 bg-white/90 backdrop-blur-md p-1.5 rounded-2xl border border-neutral-200 shadow-xs flex items-center gap-1">
+            <button
+              id="nav-home-feed-btn"
+              onClick={() => navigateTo('home')}
+              className={`flex-1 py-2 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                currentView === 'home'
+                  ? 'bg-neutral-900 text-white shadow-sm'
+                  : 'text-neutral-500 hover:text-neutral-800'
+              }`}
+            >
+              <Home className="w-3.5 h-3.5" />
+              <span>Public Feed</span>
+            </button>
+
+            <button
+              id="nav-report-waste-btn"
+              onClick={() => navigateTo('reporter')}
+              className={`flex-1 py-2 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                currentView === 'reporter'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'text-neutral-500 hover:text-neutral-800'
+              }`}
+            >
+              <Camera className="w-3.5 h-3.5" />
+              <span>Report Waste</span>
+            </button>
+          </div>
+
+          <main className="w-full flex-1">
+            {currentView === 'home' ? (
+              <HomeFeed
+                reports={reports}
+                onNavigateToReport={() => navigateTo('reporter')}
+                onToggleLike={handleToggleLike}
+                onOpenHelp={() => setShowOnboarding(true)}
+              />
+            ) : (
+              <ReportFlow
+                key={reportKey}
+                onReportSubmitted={handleReportSubmitted}
+                onOpenHelp={() => setShowOnboarding(true)}
+                onBackToHome={() => navigateTo('home')}
+              />
+            )}
           </main>
 
           {/* Floating chatbot-style Council Help Ball */}
@@ -122,10 +177,10 @@ export default function App() {
           {/* Footer with Transparent Admin Button as requested */}
           <footer className="w-full max-w-md mx-auto py-4 flex flex-col items-center justify-center gap-2">
             <p className="text-[11px] text-neutral-400 font-medium text-center">
-              Smart Waste Management • Zambia
+              Waste Watch • Community Cleanliness
             </p>
 
-            {/* Transparent Admin button - easy to access now, link-based later */}
+            {/* Transparent Admin button */}
             <button
               id="admin-transparent-entry-btn"
               onClick={() => navigateTo('admin')}

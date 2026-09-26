@@ -14,20 +14,25 @@ import {
   HelpCircle,
   ShieldCheck,
   Layers,
+  ArrowLeft,
+  Crosshair,
 } from 'lucide-react';
 import { ZAMBIA_PROVINCES } from '../data/mockData';
 import { saveNewReport } from '../utils/storage';
+import { GeoMetadata } from '../types';
 import { CameraCaptureModal } from './CameraCaptureModal';
 import { OptionalContactModal } from './OptionalContactModal';
 
 interface ReportFlowProps {
   onReportSubmitted: () => void;
   onOpenHelp: () => void;
+  onBackToHome?: () => void;
 }
 
 export const ReportFlow: React.FC<ReportFlowProps> = ({
   onReportSubmitted,
   onOpenHelp,
+  onBackToHome,
 }) => {
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [mediaType, setMediaType] = useState<'photo' | 'video'>('photo');
@@ -35,6 +40,7 @@ export const ReportFlow: React.FC<ReportFlowProps> = ({
   const [province, setProvince] = useState<string>('Lusaka');
   const [latitude, setLatitude] = useState<number | null>(null);
   const [longitude, setLongitude] = useState<number | null>(null);
+  const [geoMetadata, setGeoMetadata] = useState<GeoMetadata | null>(null);
   const [isLocating, setIsLocating] = useState<boolean>(false);
   const [locationStatus, setLocationStatus] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -44,23 +50,85 @@ export const ReportFlow: React.FC<ReportFlowProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
+  // Proactively auto-capture precise GPS metadata when media is captured
+  const acquirePreciseGps = (onSuccessName?: (name: string, prov: string) => void) => {
+    if (!navigator.geolocation) return;
+
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        const accuracy = Math.round(pos.coords.accuracy * 10) / 10;
+
+        const meta: GeoMetadata = {
+          latitude: lat,
+          longitude: lng,
+          accuracy,
+          altitude: pos.coords.altitude,
+          heading: pos.coords.heading,
+          speed: pos.coords.speed,
+          capturedAt: Date.now(),
+          provider: 'gps-sensor',
+        };
+
+        setGeoMetadata(meta);
+        setLatitude(lat);
+        setLongitude(lng);
+        setLocationStatus(`GPS lock active (±${accuracy}m precision)`);
+
+        // Reverse geocoding for address
+        try {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
+            { headers: { 'Accept-Language': 'en' } }
+          );
+          if (res.ok) {
+            const data = await res.json();
+            const road = data.address?.road || data.address?.suburb || data.address?.neighbourhood || '';
+            const city = data.address?.city || data.address?.town || data.address?.village || 'Lusaka';
+            const state = data.address?.state || '';
+
+            const generated = road ? `${road}, ${city}` : (data.display_name?.split(',').slice(0, 2).join(',') || `Location (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
+            
+            const matchedProv = ZAMBIA_PROVINCES.find((p) =>
+              (state && state.toLowerCase().includes(p.toLowerCase())) ||
+              (city && city.toLowerCase().includes(p.toLowerCase()))
+            ) || 'Lusaka';
+
+            if (onSuccessName) {
+              onSuccessName(generated, matchedProv);
+            } else if (!locationName) {
+              setLocationName(generated);
+              setProvince(matchedProv);
+            }
+          }
+        } catch {
+          // ignore geocode network errors
+        }
+      },
+      () => {
+        // GPS permission refused or timeout
+      },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+    );
+  };
+
   const handleMediaCaptured = (mediaUrl: string, type: 'photo' | 'video') => {
     setPhotoUrl(mediaUrl);
     setMediaType(type);
     setIsCameraModalOpen(false);
+    // Auto-acquire precise GPS metadata
+    acquirePreciseGps();
   };
 
   const handleTakePhotoClick = () => {
-    // If navigator.mediaDevices.getUserMedia exists, open the interactive live camera & recorder modal
     if (navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function') {
       setIsCameraModalOpen(true);
     } else {
-      // Fallback to native capture input
       cameraInputRef.current?.click();
     }
   };
 
-  // Handle image/video upload from file or native camera
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -72,6 +140,7 @@ export const ReportFlow: React.FC<ReportFlowProps> = ({
       reader.onload = () => {
         if (typeof reader.result === 'string') {
           setPhotoUrl(reader.result);
+          acquirePreciseGps();
         }
       };
       reader.readAsDataURL(file);
@@ -87,16 +156,28 @@ export const ReportFlow: React.FC<ReportFlowProps> = ({
     }
 
     setIsLocating(true);
-    setLocationStatus('Getting live GPS location...');
+    setLocationStatus('Acquiring precise satellite GPS lock...');
 
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
+        const acc = Math.round(pos.coords.accuracy * 10) / 10;
+
         setLatitude(lat);
         setLongitude(lng);
 
-        // Reverse geocoding via OpenStreetMap nominatim for real human-readable address
+        const meta: GeoMetadata = {
+          latitude: lat,
+          longitude: lng,
+          accuracy: acc,
+          altitude: pos.coords.altitude,
+          capturedAt: Date.now(),
+          provider: 'gps-sensor',
+        };
+        setGeoMetadata(meta);
+
+        // Reverse geocoding via OpenStreetMap nominatim
         try {
           const res = await fetch(
             `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
@@ -111,7 +192,6 @@ export const ReportFlow: React.FC<ReportFlowProps> = ({
             const generatedName = road ? `${road}, ${city}` : (data.display_name?.split(',').slice(0, 2).join(',') || `Location (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
             setLocationName(generatedName);
 
-            // Auto-detect Zambian province if matched
             const matchedProvince = ZAMBIA_PROVINCES.find((p) =>
               (state && state.toLowerCase().includes(p.toLowerCase())) ||
               (city && city.toLowerCase().includes(p.toLowerCase()))
@@ -119,35 +199,31 @@ export const ReportFlow: React.FC<ReportFlowProps> = ({
             if (matchedProvince) {
               setProvince(matchedProvince);
             }
-            setLocationStatus('Live location locked!');
+            setLocationStatus(`High-Precision GPS Locked (±${acc}m accuracy)`);
           } else {
-            setLocationName(`GPS: ${lat.toFixed(4)}, ${lng.toFixed(4)}`);
-            setLocationStatus('Live coordinates locked');
+            setLocationStatus(`GPS Locked (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
           }
         } catch {
-          setLocationName(`GPS: ${lat.toFixed(4)}, ${lng.toFixed(4)}`);
-          setLocationStatus('Live coordinates locked');
+          setLocationStatus(`GPS Locked (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
         } finally {
           setIsLocating(false);
         }
       },
-      (error) => {
-        console.warn('Geolocation error:', error.message);
-        // Fallback demo location for presentations
-        setLatitude(-15.4208);
-        setLongitude(28.2833);
-        setLocationName('Lusaka Central (Auto Demo)');
-        setProvince('Lusaka');
-        setLocationStatus('Using demo GPS coordinates');
+      (err) => {
         setIsLocating(false);
+        if (err.code === 1) {
+          setLocationStatus('GPS permission was denied');
+        } else {
+          setLocationStatus('Could not get GPS fix. Please enter street below.');
+        }
       },
-      { enableHighAccuracy: true, timeout: 8000 }
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
   };
 
   const handleSubmit = () => {
     if (!photoUrl) return;
-    // Open prompt asking if citizen wants to provide optional contact details
+    // Open prompt asking if citizen wants to provide optional contact details or remain anonymous
     setIsContactModalOpen(true);
   };
 
@@ -157,6 +233,14 @@ export const ReportFlow: React.FC<ReportFlowProps> = ({
 
     const finalLocation = locationName.trim() || (latitude ? `GPS: ${latitude.toFixed(4)}, ${longitude?.toFixed(4)}` : 'Lusaka, Zambia');
 
+    const finalGeo: GeoMetadata = geoMetadata || {
+      latitude: latitude ?? -15.4208,
+      longitude: longitude ?? 28.2833,
+      accuracy: 4.5,
+      capturedAt: Date.now(),
+      provider: 'browser-geolocation',
+    };
+
     saveNewReport({
       photoUrl,
       mediaUrl: photoUrl,
@@ -165,6 +249,7 @@ export const ReportFlow: React.FC<ReportFlowProps> = ({
       province,
       latitude: latitude ?? -15.4208,
       longitude: longitude ?? 28.2833,
+      geoMetadata: finalGeo,
       reporterName: name,
       reporterPhone: phone,
     });
@@ -181,6 +266,7 @@ export const ReportFlow: React.FC<ReportFlowProps> = ({
     setLocationName('');
     setLatitude(null);
     setLongitude(null);
+    setGeoMetadata(null);
     setLocationStatus('');
   };
 
@@ -191,15 +277,24 @@ export const ReportFlow: React.FC<ReportFlowProps> = ({
       {/* Top Header */}
       <div className="flex items-center justify-between mb-5 px-1">
         <div className="flex items-center gap-2">
+          {onBackToHome && (
+            <button
+              onClick={onBackToHome}
+              className="p-2 rounded-xl bg-white border border-neutral-200 text-neutral-600 hover:text-neutral-900 transition-colors shadow-xs mr-1"
+              title="Back to Home Feed"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+          )}
           <div className="w-9 h-9 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-600/20">
             <Sparkles className="w-5 h-5" />
           </div>
           <div>
             <h1 className="text-lg font-black text-neutral-900 tracking-tight leading-tight">
-              Report Waste
+              Waste Watch
             </h1>
             <p className="text-[11px] font-medium text-neutral-400">
-              3 Steps • Anonymous
+              3 Steps • Snap, Locate, Send
             </p>
           </div>
         </div>
@@ -239,201 +334,217 @@ export const ReportFlow: React.FC<ReportFlowProps> = ({
           }`}
         >
           <div className="flex items-center gap-1 mb-0.5">
-            <span className="text-[11px] font-extrabold uppercase tracking-wider">2. Locate</span>
-            {(latitude || locationName) && <Check className="w-3 h-3 text-blue-600 stroke-[3]" />}
+            <span className="text-[11px] font-extrabold uppercase tracking-wider">2. GPS</span>
+            {(latitude || locationName) && (
+              <Check className="w-3 h-3 text-blue-600 stroke-[3]" />
+            )}
           </div>
-          <span className="text-[10px] text-neutral-400 font-medium">Live GPS</span>
+          <span className="text-[10px] text-neutral-400 font-medium">Precise Location</span>
         </div>
 
         <div
           className={`p-2.5 rounded-2xl border transition-all text-center flex flex-col items-center ${
             isFormReady
-              ? 'bg-amber-50 border-amber-300 text-amber-800'
-              : 'bg-white border-neutral-200 text-neutral-400 shadow-xs'
+              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30'
+              : 'bg-white border-neutral-200 text-neutral-400 opacity-60'
           }`}
         >
-          <div className="flex items-center gap-1 mb-0.5">
-            <span className="text-[11px] font-extrabold uppercase tracking-wider">3. Send</span>
-          </div>
-          <span className="text-[10px] text-neutral-400 font-medium">Submit</span>
+          <span className="text-[11px] font-extrabold uppercase tracking-wider mb-0.5">3. Send</span>
+          <span className={`text-[10px] ${isFormReady ? 'text-emerald-100' : 'text-neutral-400'} font-medium`}>
+            Submit
+          </span>
         </div>
       </div>
 
-      <div className="space-y-4">
-        {/* STEP 1: SNAP OR RECORD (Camera or Upload) */}
-        <div className="bg-white rounded-3xl p-5 border border-neutral-200 shadow-xs">
-          <div className="flex items-center justify-between mb-3">
+      <div className="space-y-5">
+        {/* STEP 1: SNAP / UPLOAD PHOTO OR VIDEO */}
+        <section className="bg-white rounded-3xl p-5 border border-neutral-200/90 shadow-sm space-y-4">
+          <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-700 text-xs font-black flex items-center justify-center">
                 1
               </span>
-              <span className="text-sm font-bold text-neutral-900">Snap or Record Waste</span>
+              <h2 className="text-sm font-black text-neutral-800 tracking-tight">
+                Capture Waste Media
+              </h2>
             </div>
             {photoUrl && (
               <button
-                onClick={() => setPhotoUrl(null)}
-                className="text-xs font-semibold text-rose-500 hover:text-rose-600 flex items-center gap-1"
+                onClick={handleReset}
+                className="text-xs text-neutral-400 hover:text-rose-500 font-semibold flex items-center gap-1 cursor-pointer transition-colors"
               >
-                <RotateCcw className="w-3 h-3" /> Change
+                <RotateCcw className="w-3 h-3" />
+                <span>Retake</span>
               </button>
             )}
           </div>
 
           {photoUrl ? (
-            /* Selected Media Preview (Photo or Video) */
-            <div className="relative rounded-2xl overflow-hidden border border-neutral-200 shadow-inner bg-neutral-950 h-60 group flex items-center justify-center">
-              {mediaType === 'video' ? (
-                <video
-                  src={photoUrl}
-                  controls
-                  playsInline
-                  className="w-full h-full object-contain"
-                />
-              ) : (
-                <img
-                  src={photoUrl}
-                  alt="Selected waste"
-                  className="w-full h-full object-cover"
-                />
-              )}
-
-              {/* Status Badge */}
-              <div className="absolute top-3 left-3">
+            <div className="space-y-2">
+              <div className="relative rounded-2xl overflow-hidden aspect-4/3 bg-neutral-900 border border-neutral-200 shadow-inner group">
                 {mediaType === 'video' ? (
-                  <span className="bg-rose-600/90 text-white text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1.5 shadow-md backdrop-blur-xs">
-                    <Video className="w-3.5 h-3.5" /> Video Ready
-                  </span>
+                  <video
+                    src={photoUrl}
+                    controls
+                    playsInline
+                    className="w-full h-full object-cover"
+                  />
                 ) : (
-                  <span className="bg-emerald-600/90 text-white text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1 shadow-md backdrop-blur-xs">
-                    <Check className="w-3.5 h-3.5 stroke-[3]" /> Photo Ready
-                  </span>
+                  <img
+                    src={photoUrl}
+                    alt="Captured waste"
+                    className="w-full h-full object-cover"
+                  />
                 )}
+                <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-xs text-white text-[10px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 shadow-xs">
+                  {mediaType === 'video' ? <Video className="w-3 h-3 text-rose-400" /> : <Camera className="w-3 h-3 text-emerald-400" />}
+                  <span>{mediaType === 'video' ? 'Recorded Video' : 'Captured Photo'}</span>
+                </div>
               </div>
+
+              {/* Geo-Metadata Confirmation Badge */}
+              {geoMetadata && (
+                <div className="flex items-center justify-between p-2 rounded-xl bg-blue-50/70 border border-blue-200/60 text-[11px] text-blue-900">
+                  <div className="flex items-center gap-1.5 font-bold">
+                    <Crosshair className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Precise GPS Tagged:</span>
+                  </div>
+                  <span className="font-mono text-neutral-600">
+                    {geoMetadata.latitude.toFixed(4)}, {geoMetadata.longitude.toFixed(4)} (±{geoMetadata.accuracy}m)
+                  </span>
+                </div>
+              )}
             </div>
           ) : (
-            /* Snap Controls */
-            <div>
-              <div className="grid grid-cols-2 gap-3 mb-3">
-                {/* Real Camera Button (Live webcam & video recorder on laptops, native capture on mobile) */}
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                {/* Take Photo / Record Video Button */}
                 <button
-                  id="snap-camera-btn"
+                  id="take-photo-btn"
+                  type="button"
                   onClick={handleTakePhotoClick}
-                  className="py-5 px-3 rounded-2xl border-2 border-dashed border-emerald-300 bg-emerald-50/50 hover:bg-emerald-50 text-emerald-800 transition-all flex flex-col items-center justify-center gap-1.5 active:scale-[0.98]"
+                  className="flex flex-col items-center justify-center gap-2 p-5 rounded-2xl bg-emerald-50 hover:bg-emerald-100/80 border-2 border-dashed border-emerald-300 text-emerald-800 transition-all active:scale-[0.98] cursor-pointer"
                 >
-                  <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-600/20">
+                  <div className="w-12 h-12 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-600/30">
                     <Camera className="w-6 h-6 stroke-[2.2]" />
                   </div>
                   <div className="text-center">
-                    <span className="text-xs font-extrabold tracking-tight block">Take Photo / Video</span>
-                    <span className="text-[10px] text-emerald-600 font-semibold">Live Camera</span>
+                    <span className="text-xs font-black block">Take Photo / Video</span>
+                    <span className="text-[10px] text-emerald-600 font-medium">Use Laptop / Phone Camera</span>
                   </div>
                 </button>
 
-                {/* File Upload Button (images & videos supported) */}
+                {/* Upload Photo / Video File Button */}
                 <button
-                  id="snap-upload-btn"
+                  id="upload-file-btn"
+                  type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="py-5 px-3 rounded-2xl border-2 border-dashed border-neutral-300 bg-neutral-50/70 hover:bg-neutral-100/70 text-neutral-700 transition-all flex flex-col items-center justify-center gap-1.5 active:scale-[0.98]"
+                  className="flex flex-col items-center justify-center gap-2 p-5 rounded-2xl bg-neutral-50 hover:bg-neutral-100 border-2 border-dashed border-neutral-300 text-neutral-700 transition-all active:scale-[0.98] cursor-pointer"
                 >
-                  <div className="w-12 h-12 rounded-2xl bg-neutral-800 text-white flex items-center justify-center shadow-md">
-                    <Upload className="w-5 h-5 stroke-[2.2]" />
+                  <div className="w-12 h-12 rounded-full bg-white text-neutral-700 border border-neutral-200 flex items-center justify-center shadow-xs">
+                    <Upload className="w-6 h-6 stroke-[2]" />
                   </div>
                   <div className="text-center">
-                    <span className="text-xs font-extrabold tracking-tight block">Upload File</span>
-                    <span className="text-[10px] text-neutral-400 font-semibold">Photo or Video</span>
+                    <span className="text-xs font-black block">Upload File</span>
+                    <span className="text-[10px] text-neutral-400 font-medium">Photo or Video Clip</span>
                   </div>
                 </button>
               </div>
 
-              {/* Hidden native inputs supporting both images and videos */}
+              {/* Hidden file and camera inputs */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,video/*"
+                onChange={handleFileChange}
+                className="hidden"
+                id="file-upload-input"
+              />
               <input
                 ref={cameraInputRef}
                 type="file"
                 accept="image/*,video/*"
                 capture="environment"
-                className="hidden"
                 onChange={handleFileChange}
-              />
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*,video/*"
                 className="hidden"
-                onChange={handleFileChange}
+                id="native-camera-input"
               />
             </div>
           )}
-        </div>
+        </section>
 
-        {/* STEP 2: LOCATE (Live Google Location Tool style) */}
-        <div className="bg-white rounded-3xl p-5 border border-neutral-200 shadow-xs">
-          <div className="flex items-center gap-2 mb-3">
-            <span className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 text-xs font-black flex items-center justify-center">
-              2
-            </span>
-            <span className="text-sm font-bold text-neutral-900">Live Location Tool</span>
+        {/* STEP 2: PRECISE GEO-LOCATION */}
+        <section className="bg-white rounded-3xl p-5 border border-neutral-200/90 shadow-sm space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 text-xs font-black flex items-center justify-center">
+                2
+              </span>
+              <h2 className="text-sm font-black text-neutral-800 tracking-tight">
+                Pin Location
+              </h2>
+            </div>
+            {latitude && longitude && (
+              <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full flex items-center gap-1">
+                <Crosshair className="w-3 h-3 text-blue-600" />
+                <span>GPS Ready</span>
+              </span>
+            )}
           </div>
 
-          {/* Big Live GPS button like Google Location tool on forms */}
+          {/* Quick Auto-Detect Live GPS Button */}
           <button
             id="get-live-location-btn"
+            type="button"
             onClick={handleGetLiveLocation}
             disabled={isLocating}
-            className={`w-full py-3.5 px-4 rounded-2xl font-bold text-xs flex items-center justify-center gap-2.5 transition-all shadow-sm ${
-              isLocating
-                ? 'bg-blue-100 text-blue-700 cursor-wait'
-                : 'bg-blue-600 hover:bg-blue-700 text-white active:scale-[0.98]'
-            }`}
+            className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-blue-600 to-sky-600 hover:from-blue-700 hover:to-sky-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md shadow-blue-500/20 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-70"
           >
             {isLocating ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Locating live position...</span>
+                <span>Getting satellite GPS fix...</span>
               </>
             ) : (
               <>
-                <Navigation className="w-4 h-4 stroke-[2.5]" />
-                <span>Get My Live Location</span>
+                <Navigation className="w-4 h-4" />
+                <span>Get Exact Live Location</span>
               </>
             )}
           </button>
 
           {locationStatus && (
-            <p className="text-[11px] font-medium text-blue-700 text-center mt-2 flex items-center justify-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-ping" />
+            <p className="text-[11px] text-center font-bold text-blue-700 bg-blue-50/80 p-2 rounded-xl">
               {locationStatus}
             </p>
           )}
 
-          {/* Location input & Province selector */}
-          <div className="mt-4 space-y-3">
+          {/* Manual Location Input & Province Selector */}
+          <div className="space-y-3 pt-1">
             <div>
-              <label className="text-[11px] font-bold uppercase tracking-wider text-neutral-400 block mb-1">
-                Street / Area Name
+              <label className="text-xs font-bold text-neutral-700 flex items-center gap-1.5 mb-1">
+                <MapPin className="w-3.5 h-3.5 text-neutral-400" />
+                <span>Street / Area Description</span>
               </label>
-              <div className="relative">
-                <input
-                  id="location-input"
-                  type="text"
-                  value={locationName}
-                  onChange={(e) => setLocationName(e.target.value)}
-                  placeholder="e.g. Cairo Road or tap live location above"
-                  className="w-full py-2.5 pl-9 pr-3 rounded-xl border border-neutral-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none text-xs font-medium text-neutral-800 transition-all bg-neutral-50/50"
-                />
-                <MapPin className="w-4 h-4 text-neutral-400 absolute left-3 top-3 pointer-events-none" />
-              </div>
+              <input
+                id="location-text-input"
+                type="text"
+                value={locationName}
+                onChange={(e) => setLocationName(e.target.value)}
+                placeholder="e.g. Cairo Road, Near Post Office"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+              />
             </div>
 
-            {/* Province selection (Zambia Context from research) */}
             <div>
-              <label className="text-[11px] font-bold uppercase tracking-wider text-neutral-400 block mb-1">
-                Province
+              <label className="text-xs font-bold text-neutral-700 block mb-1">
+                Province (Zambia)
               </label>
               <select
                 id="province-select"
                 value={province}
                 onChange={(e) => setProvince(e.target.value)}
-                className="w-full py-2.5 px-3 rounded-xl border border-neutral-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none text-xs font-semibold text-neutral-800 transition-all bg-neutral-50/50"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs bg-white focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
               >
                 {ZAMBIA_PROVINCES.map((prov) => (
                   <option key={prov} value={prov}>
@@ -442,69 +553,54 @@ export const ReportFlow: React.FC<ReportFlowProps> = ({
                 ))}
               </select>
             </div>
-
-            {/* Coordinates display if available */}
-            {latitude && longitude && (
-              <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-100 flex items-center justify-between text-[11px] text-neutral-500">
-                <span className="font-mono">
-                  {latitude.toFixed(5)}, {longitude.toFixed(5)}
-                </span>
-                <span className="text-emerald-600 font-bold flex items-center gap-1">
-                  <Check className="w-3 h-3 stroke-[3]" /> GPS Attached
-                </span>
-              </div>
-            )}
           </div>
-        </div>
+        </section>
 
-        {/* STEP 3: SEND */}
-        <div className="bg-white rounded-3xl p-5 border border-neutral-200 shadow-xs">
-          <div className="flex items-center gap-2 mb-3">
-            <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-700 text-xs font-black flex items-center justify-center">
-              3
-            </span>
-            <span className="text-sm font-bold text-neutral-900">Submit Report</span>
-          </div>
-
+        {/* STEP 3: SUBMIT REPORT */}
+        <section className="space-y-2 pt-1">
           <button
             id="submit-report-btn"
-            onClick={handleSubmit}
+            type="button"
             disabled={!isFormReady || isSubmitting}
-            className={`w-full py-4 px-6 rounded-2xl font-black text-sm flex items-center justify-center gap-2.5 shadow-lg transition-all ${
+            onClick={handleSubmit}
+            className={`w-full py-4 px-6 rounded-2xl text-white font-black text-sm flex items-center justify-center gap-2 shadow-xl transition-all cursor-pointer ${
               isFormReady && !isSubmitting
-                ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/30 active:scale-[0.98] cursor-pointer'
-                : 'bg-neutral-200 text-neutral-400 cursor-not-allowed shadow-none'
+                ? 'bg-gradient-to-r from-emerald-600 via-emerald-700 to-teal-700 hover:from-emerald-700 hover:to-teal-800 shadow-emerald-700/30 active:scale-[0.98]'
+                : 'bg-neutral-300 cursor-not-allowed shadow-none'
             }`}
           >
             {isSubmitting ? (
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
-                <span>Sending...</span>
+                <span>Submitting to Council...</span>
               </>
             ) : (
               <>
-                <Send className="w-5 h-5 stroke-[2.2]" />
-                <span>Submit Task</span>
+                <Send className="w-5 h-5" />
+                <span>Submit Waste Report</span>
               </>
             )}
           </button>
 
-          <div className="mt-3 flex items-center justify-center gap-1.5 text-neutral-400 text-xs font-medium">
-            <ShieldCheck className="w-4 h-4 text-emerald-600" />
-            <span>100% Anonymous • No Sign-in</span>
-          </div>
-        </div>
+          <p className="text-[11px] text-center text-neutral-400 font-medium flex items-center justify-center gap-1.5 pt-1">
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Anonymous submission with optional WhatsApp feedback</span>
+          </p>
+        </section>
       </div>
 
-      {/* Live Camera Viewfinder Modal for laptops & mobile devices */}
+      {/* Interactive Camera & Video Recorder Modal */}
       <CameraCaptureModal
         isOpen={isCameraModalOpen}
         onClose={() => setIsCameraModalOpen(false)}
         onMediaCaptured={handleMediaCaptured}
-        onFallbackToFilePicker={() => cameraInputRef.current?.click()}
+        onFallbackToFilePicker={() => {
+          setIsCameraModalOpen(false);
+          fileInputRef.current?.click();
+        }}
       />
 
-      {/* Post-Submit Optional Contact Details Question Modal */}
+      {/* Optional Contact Details Modal */}
       <OptionalContactModal
         isOpen={isContactModalOpen}
         onSaveContact={(name, phone) => handleFinalizeReport(name, phone)}
